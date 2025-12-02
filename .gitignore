@@ -1,0 +1,35 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+*.egg-info/
+
+# Experiment outputs (regenerable, large)
+data/
+results/
+results_contamination/
+results_movies/
+cache/
+
+# Binary data files
+*.npy
+*.npz
+*.pkl
+*.flo
+*.db
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Temp/scratch files
+temp_*.toml
+tst.py

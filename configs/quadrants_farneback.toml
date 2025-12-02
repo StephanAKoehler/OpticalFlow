@@ -1,0 +1,137 @@
+# File: configs/quadrants_farneback.toml
+# Complete experiment config for sprite-based optical flow analysis
+#
+# Usage:
+#   python scripts/run_experiment.py configs/quadrants_farneback.toml
+#
+# Or individual stages:
+#   python scripts/generate_sprites.py configs/quadrants_farneback.toml
+#   python scripts/optical_flow_track.py configs/quadrants_farneback.toml --movie-hash <hash>
+#   python scripts/optimize_weights.py configs/quadrants_farneback.toml --movie-hash <hash> --of-hash <hash>
+
+# ============================================================================
+# GENERATION CONFIG
+# Used by: generate_sprites.py
+# Hash computed from: [image], [temporal], [background], [sprites.*]
+# ============================================================================
+
+[image]
+size = [288, 288]
+
+[temporal]
+num_frames = 10
+
+[background]
+type = "solid"
+color_rgb = [0, 0, 0]  # Black background
+
+# Four quadrant sprites with different motions
+# Creates a "double dislocation" pattern:
+# - Vertical color boundary (red/blue vs yellow/magenta)
+# - Horizontal motion boundary (moving right vs moving left)
+
+[sprites.upper_left]
+midpoint = [72, 72]
+motion = [1, 0, 0]      # Move right 1 px/frame
+z_order = 1
+shape = "quadrant"
+texture_type = "checkerboard"
+square_size = 25
+line_width = 1
+line_color = [0, 0, 0]
+color_rgb = [255, 0, 0]  # Red
+
+[sprites.upper_right]
+midpoint = [216, 72]
+motion = [-1, 0, 0]     # Move left 1 px/frame
+z_order = 2
+shape = "quadrant"
+texture_type = "checkerboard"
+square_size = 25
+line_width = 1
+line_color = [0, 0, 0]
+color_rgb = [0, 0, 255]  # Blue
+
+[sprites.lower_left]
+midpoint = [72, 216]
+motion = [0, -1, 0]     # Move up 1 px/frame
+z_order = 3
+shape = "quadrant"
+texture_type = "checkerboard"
+square_size = 25
+line_width = 1
+line_color = [0, 0, 0]
+color_rgb = [255, 255, 0]  # Yellow
+
+[sprites.lower_right]
+midpoint = [216, 216]
+motion = [0, 1, 0]      # Move down 1 px/frame
+z_order = 4
+shape = "quadrant"
+texture_type = "checkerboard"
+square_size = 25
+line_width = 1
+line_color = [0, 0, 0]
+color_rgb = [255, 0, 255]  # Magenta
+
+# ============================================================================
+# OPTICAL FLOW CONFIG
+# Used by: optical_flow_track.py
+# Hash computed from: [parameter_sweep], [perturbations]
+# ============================================================================
+
+[parameter_sweep]
+algorithm = "farneback"
+
+# Parameter values to sweep (Cartesian product)
+# Total configs = 2 * 5 * 3 * 2 * 2 = 120 configurations
+pyr_scale = [0.5, 0.75]
+levels = 1
+winsize = [5, 9, 15, 21, 23]
+iterations = [3, 10, 30]
+poly_n = [5, 7]
+poly_sigma = [1.0, 1.2]
+flags = 0
+
+[perturbations]
+directions = 2      # 2, 4, or 8 directions
+magnitude = 1       # Perturbation magnitude in pixels
+
+# ============================================================================
+# EVALUATION CONFIG
+# Used by: optical_flow_track.py, optimize_weights.py
+# ============================================================================
+
+[evaluation]
+ground_truth = true
+epe_power = 2       # EPE^2 (MSE-like) vs EPE^1 (MAE-like)
+
+# ============================================================================
+# OPTIMIZATION CONFIG
+# Used by: optimize_weights.py
+# ============================================================================
+
+[optimization]
+n_trials = 100
+methods = ["raw_sum", "raw_max", "mad_sum", "mad_max"]
+
+# Weights to optimize - value is initial condition
+# Sum will be normalized to 1.0 before optimization
+[optimization.weights]
+photometric = 1.0
+photometric_rgb = 0.5
+photometric_rgb_log = 0.5
+
+# Fixed weights - not optimized, forced to this exact value
+[optimization.fixed_weights]
+traction = 0.0
+perturbation_rms = 0.0
+consistency = 0.0
+speed_sym = 0.0
+
+# ============================================================================
+# VISUALIZATION CONFIG (optional)
+# ============================================================================
+
+[visualization]
+dpi = 150

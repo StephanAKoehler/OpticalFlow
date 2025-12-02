@@ -1,0 +1,21 @@
+# File: scripts_contamination/test_config.toml
+# Minimal configuration for quick testing
+
+[algorithm]
+name = "farneback"
+
+[parameters]
+pyr_scale = 0.5
+levels = [3]
+winsize = [9, 15]
+iterations = [3]
+poly_n = [5]
+poly_sigma = [1.1]
+flags = 0
+
+[perturbations]
+magnitude = 1.0
+
+[measurement]
+threshold = 0.01
+sizes = [100, 200]

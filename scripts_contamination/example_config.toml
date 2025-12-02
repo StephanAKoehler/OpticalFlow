@@ -1,0 +1,31 @@
+# File: scripts_contamination/example_config.toml
+# Example configuration for boundary contamination measurement
+
+[algorithm]
+name = "farneback"
+
+[parameters]
+# Pyramid scale factor
+pyr_scale = 0.5
+# Pyramid levels
+levels = [3, 4]
+# Window sizes to test
+winsize = [5, 9, 15, 21]
+# Iterations
+iterations = [3, 5]
+# Polynomial expansion neighborhood
+poly_n = [5, 7]
+# Polynomial expansion sigma
+poly_sigma = [1.1]
+# Flags
+flags = 0
+
+[perturbations]
+# Perturbation magnitude in pixels
+magnitude = 1.0
+
+[measurement]
+# Error threshold for "clean" region (pixels)
+threshold = 0.01
+# Tile sizes to test (larger = more stable measurement)
+sizes = [100, 200, 400]

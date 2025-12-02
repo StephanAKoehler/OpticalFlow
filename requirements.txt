@@ -1,0 +1,44 @@
+# Optical Flow Ensemble Pipeline - Requirements
+
+# Core dependencies
+numpy>=1.24.0,<3.0
+scipy>=1.10.0
+
+# OpenCV with contrib modules
+# Includes: Farneback, DIS, DualTVL1, DeepFlow, and other advanced algorithms
+opencv-contrib-python>=4.10.0
+
+# Configuration
+tomli>=2.0.0    # TOML parser (use tomllib in Python 3.11+)
+tomli_w>=1.0.0  # TOML writer
+
+# Visualization
+matplotlib>=3.7.0
+seaborn>=0.12.0
+
+# Utilities
+pandas>=2.0.0
+
+# Optimization
+optuna>=3.0.0
+
+# Optional but recommended
+tqdm>=4.65.0
+
+# Installation:
+# =============
+# 
+# Fresh install:
+#   pip install -r requirements.txt
+#
+# If you have opencv-python installed:
+#   pip uninstall opencv-python opencv-python-headless
+#   pip install -r requirements.txt
+#
+# Algorithms available with opencv-contrib-python:
+#   - Farneback ✓
+#   - DIS ✓
+#   - DualTVL1 ✓ (recommended for boundaries)
+#   - DeepFlow ✓ (if available)
+#   - PCAFlow ✓ (if available)
+#   - SimpleFlow ✓ (if available)

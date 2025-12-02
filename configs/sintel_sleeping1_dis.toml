@@ -1,0 +1,49 @@
+# File: configs/sintel_sleeping1_dis.toml
+# Sintel sleeping_1 with DIS optical flow algorithm
+
+[source]
+type = "sintel"
+sintel_root = "~/Dropbox/Projects/OpticalFlow_Sintel/MPI-Sintel-complete"
+sequence = "sleeping_1"
+pass = "clean"
+frames = [0, 1, 2, 3, 4]
+
+[preprocess]
+scale = 0.25
+gaussian_sigma = 0.5
+
+[parameter_sweep]
+algorithm = "dis"
+preset = ["MEDIUM", "FAST"]
+finest_scale = 0  # 0=full res only, no pyramid
+patch_size = [6, 8, 12, 16]
+patch_stride = [3, 4, 6]
+
+[perturbations]
+directions = 2
+magnitude = 1
+
+[evaluation]
+ground_truth = true
+epe_power = 2
+
+[optimization]
+n_trials = 50
+methods = ["raw_sum", "raw_max", "mad_sum", "mad_max"]
+
+# Weights to optimize - value is initial condition
+# Sum will be normalized to 1.0 before optimization
+[optimization.weights]
+photometric = 1.0
+photometric_rgb = 0.5
+photometric_rgb_log = 0.5
+
+# Fixed weights - not optimized, forced to this exact value
+[optimization.fixed_weights]
+traction = 0.0
+perturbation_rms = 0.0
+consistency = 0.0
+speed_sym = 0.0
+
+[visualization]
+dpi = 100

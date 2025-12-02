@@ -1,0 +1,111 @@
+# File: configs/quadrants_quick.toml
+# Quick test config - fewer parameters for fast iteration
+#
+# Usage:
+#   python scripts/run_experiment.py configs/quadrants_quick.toml
+
+# ============================================================================
+# GENERATION (same as full config)
+# ============================================================================
+
+[image]
+size = [288, 288]
+
+[temporal]
+num_frames = 5  # Fewer frames for quick test
+
+[background]
+type = "solid"
+color_rgb = [0, 0, 0]
+
+[sprites.upper_left]
+midpoint = [72, 72]
+motion = [1, 0, 0]
+z_order = 1
+shape = "quadrant"
+texture_type = "checkerboard"
+square_size = 25
+line_width = 1
+line_color = [0, 0, 0]
+color_rgb = [255, 0, 0]
+
+[sprites.upper_right]
+midpoint = [216, 72]
+motion = [-1, 0, 0]
+z_order = 2
+shape = "quadrant"
+texture_type = "checkerboard"
+square_size = 25
+line_width = 1
+line_color = [0, 0, 0]
+color_rgb = [0, 255, 0]
+
+[sprites.lower_left]
+midpoint = [72, 216]
+motion = [0, -1, 0]
+z_order = 3
+shape = "quadrant"
+texture_type = "checkerboard"
+square_size = 25
+line_width = 1
+line_color = [0, 0, 0]
+color_rgb = [0, 0, 255]
+
+[sprites.lower_right]
+midpoint = [216, 216]
+motion = [0, 1, 0]
+z_order = 4
+shape = "quadrant"
+texture_type = "checkerboard"
+square_size = 25
+line_width = 1
+line_color = [0, 0, 0]
+color_rgb = [0, 255, 255]
+
+# ============================================================================
+# OPTICAL FLOW - REDUCED SWEEP
+# Only 4 * 2 * 2 = 16 configurations
+# ============================================================================
+
+[parameter_sweep]
+algorithm = "farneback"
+pyr_scale = 0.5
+levels = 1
+winsize = [9, 15, 21, 31]
+iterations = [3, 10]
+poly_n = [5, 7]
+poly_sigma = 1.1
+flags = 0
+
+[perturbations]
+directions = 2
+magnitude = 1
+
+# ============================================================================
+# EVALUATION & OPTIMIZATION
+# ============================================================================
+
+[evaluation]
+ground_truth = true
+epe_power = 2
+
+[optimization]
+n_trials = 50
+methods = ["raw_sum", "mad_sum"]
+
+# Weights to optimize - value is initial condition
+# Sum will be normalized to 1.0 before optimization
+[optimization.weights]
+photometric = 1.0
+photometric_rgb = 0.5
+photometric_rgb_log = 0.5
+
+# Fixed weights - not optimized, forced to this exact value
+[optimization.fixed_weights]
+traction = 0.0
+perturbation_rms = 0.0
+consistency = 0.0
+speed_sym = 0.0
+
+[visualization]
+dpi = 100

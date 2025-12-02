@@ -1,0 +1,48 @@
+# File: configs/sintel_bamboo_1.toml
+# Sintel bamboo_1 sequence
+
+[source]
+type = "sintel"
+sintel_root = "~/Dropbox/Projects/OpticalFlow_Sintel/MPI-Sintel-complete"
+sequence = "bamboo_1"
+pass = "clean"
+frames = [0, 1, 2, 3, 4]  # 5 frames → 4 flow pairs
+
+[parameter_sweep]
+algorithm = "farneback"
+pyr_scale = 0.5
+levels = 4
+winsize = [9, 15, 21, 31]
+iterations = [3, 10]
+poly_n = [5, 7]
+poly_sigma = 1.1
+flags = 0
+
+[perturbations]
+directions = 2
+magnitude = 1
+
+[evaluation]
+ground_truth = true
+epe_power = 2
+
+[optimization]
+n_trials = 50
+methods = ["raw_sum", "raw_max", "mad_sum", "mad_max"]
+
+# Weights to optimize - value is initial condition
+# Sum will be normalized to 1.0 before optimization
+[optimization.weights]
+photometric = 1.0
+photometric_rgb = 0.5
+photometric_rgb_log = 0.5
+
+# Fixed weights - not optimized, forced to this exact value
+[optimization.fixed_weights]
+traction = 0.0
+perturbation_rms = 0.0
+consistency = 0.0
+speed_sym = 0.0
+
+[visualization]
+dpi = 100
