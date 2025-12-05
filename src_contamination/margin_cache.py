@@ -118,9 +118,9 @@ def get_margin(
         print(f"❌ No cached margin for {key} and auto_measure=False")
         sys.exit(1)
     
-    # Measure and cache
+    # Measure and cache (verbose=True to show progress on large margins)
     print(f"📏 Measuring boundary margin for {config_name(config)}...")
-    results = measure_boundary_contamination(config, shift=magnitude)
+    results = measure_boundary_contamination(config, shift=magnitude, verbose=True)
     
     save_margin(config, magnitude, results)
     print(f"   ✅ Margin: {results['margin']} px")

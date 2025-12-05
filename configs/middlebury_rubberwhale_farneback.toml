@@ -1,0 +1,49 @@
+# File: configs/middlebury_rubberwhale_farneback.toml
+# Middlebury RubberWhale sequence - small motions, good texture
+
+[source]
+type = "middlebury"
+middlebury_root = "~/Dropbox/Projects/OpticalFlow_Middlebury"
+sequence = "RubberWhale"
+
+
+# No preprocessing needed - Middlebury has small motions (typically < 5 pixels)
+# [preprocess]
+# scale = 1.0
+# gaussian_sigma = 0.0
+
+[parameter_sweep]
+algorithm = "farneback"
+pyr_scale = 0.5
+levels = [1,2,3,4]
+winsize = [7, 9, 15, 21, 31, 41]
+iterations = [3, 10]
+poly_n = [5, 7]
+poly_sigma = [1.1]
+flags = 0
+
+[perturbations]
+directions = 2
+magnitude = 1
+
+[evaluation]
+ground_truth = true
+epe_power = 2
+
+[optimization]
+loss_function = "multiplicative"
+n_trials = 200
+
+[ensemble]
+#sigma = [0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 4.0, 5.0, 10.0]
+sigma = [1.0]
+
+[optimization.multiplicative_params]
+c_gray = 0.5
+c_r = 0.5
+c_g = 0.5
+c_b = 0.5
+c_log = 0.5
+c_traction = 0.5
+c_consistency = 0.5
+c_perturbation = 0.5

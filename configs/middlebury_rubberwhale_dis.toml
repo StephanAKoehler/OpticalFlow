@@ -1,0 +1,40 @@
+# File: configs/middlebury_rubberwhale_dis.toml
+# Middlebury RubberWhale sequence - DIS optical flow
+
+[source]
+type = "middlebury"
+middlebury_root = "~/Dropbox/Projects/OpticalFlow_Middlebury"
+sequence = "RubberWhale"
+
+[parameter_sweep]
+algorithm = "dis"
+preset = ["FAST", "MEDIUM"]
+finest_scale = [0]
+iterations = [12, 25]
+patch_size = [8, 12]
+patch_stride = [3, 4]
+
+[perturbations]
+directions = 2
+magnitude = 2
+
+[evaluation]
+ground_truth = true
+epe_power = 2
+
+[ensemble]
+sigma = [0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 4.0, 5.0, 10.0]
+
+[optimization]
+loss_function = "multiplicative"
+n_trials = 200
+
+[optimization.multiplicative_params]
+c_gray = 0.5
+c_r = 0.5
+c_g = 0.5
+c_b = 0.5
+c_log = 0.5
+c_traction = 0.5
+c_consistency = 0.5
+c_perturbation = 0.5

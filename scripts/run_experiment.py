@@ -8,14 +8,21 @@ Runs the full optical flow pipeline:
 2. sweep          - Run OF parameter sweep
 3. optimize       - Find optimal weights across sequence (requires ground_truth=true)
 
+Supports series mode with SEQUENCES list for batch processing.
+
 Usage:
     python scripts/run_experiment.py config.toml                    # default: flow (load+sweep)
     python scripts/run_experiment.py config.toml --stage full       # load+sweep+optimize
     python scripts/run_experiment.py config.toml --stage load
     python scripts/run_experiment.py config.toml --stage sweep
     python scripts/run_experiment.py config.toml --stage optimize
+    
+Series mode (config with SEQUENCES list):
+    python scripts/run_experiment.py configs/middlebury_farneback.toml
 """
 
+import copy
+import csv
 import hashlib
 import json
 import shutil
@@ -23,6 +30,7 @@ import sys
 from pathlib import Path
 
 import tomli
+import tomli_w
 
 # Add parent to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -288,7 +296,6 @@ def load_sintel_sequence(
         sys.exit(1)
     H, W = first_frame.shape[:2]
     
-    import tomli_w
     movie_config = {
         'image': {
             'size': [W, H],  # [width, height] to match sprite config convention
@@ -468,7 +475,6 @@ def load_middlebury_sequence(
         sys.exit(1)
     H, W = first_frame.shape[:2]
     
-    import tomli_w
     movie_config = {
         'image': {
             'size': [W, H],
@@ -511,6 +517,370 @@ def load_external_source(
         print(f"❌ ERROR: Unknown source type: {source_type}")
         print("   Supported types: sintel, middlebury")
         sys.exit(1)
+
+
+# =============================================================================
+# Series Mode Support
+# =============================================================================
+
+def compute_series_hash(config: dict) -> str:
+    """
+    Compute hash for series config, excluding SEQUENCES list.
+    
+    This ensures adding/removing sequences doesn't change the hash,
+    but changing parameters does.
+    """
+    config_copy = copy.deepcopy(config)
+    
+    # Remove SEQUENCES from source (we hash the template, not the list)
+    if 'source' in config_copy and 'SEQUENCES' in config_copy['source']:
+        del config_copy['source']['SEQUENCES']
+    
+    # Also remove 'sequence' if present (will be set per-sequence)
+    if 'source' in config_copy and 'sequence' in config_copy['source']:
+        del config_copy['source']['sequence']
+    
+    config_str = json.dumps(config_copy, sort_keys=True)
+    return hashlib.sha256(config_str.encode()).hexdigest()[:12]
+
+
+def extract_sequence_summary(sigma_sweep_path: Path) -> dict:
+    """
+    Extract key metrics from a sigma_sweep.json file.
+    
+    Returns dict with:
+        - best_single, oracle, headroom_pct
+        - photo_vs_single_pct, pert_vs_single_pct
+        - optimal_sigma, smooth_vs_photo_pct at optimal
+    """
+    with open(sigma_sweep_path) as f:
+        sweep = json.load(f)
+    
+    sigmas = sweep['sigmas']
+    results = sweep['results']
+    
+    # Get reference values
+    best_single = results[0]['best_single']['mean']
+    oracle = results[0]['oracle']['mean']
+    headroom = best_single - oracle
+    headroom_pct = (headroom / best_single) * 100 if best_single > 0 else 0
+    
+    photo_mean = results[0]['photo_ensemble']['mean']
+    photo_vs_single_pct = (best_single - photo_mean) / best_single * 100 if best_single > 0 else 0
+    
+    pert_mean = results[0]['pert_ensemble']['mean']
+    pert_vs_single_pct = results[0]['improvements'].get('pert_vs_single_pct', 
+                          (best_single - pert_mean) / best_single * 100 if best_single > 0 else 0)
+    
+    # Find optimal sigma (minimum smooth_fallback EPE)
+    best_idx = min(range(len(results)), key=lambda i: results[i]['smooth_fallback']['mean'])
+    optimal_sigma = sigmas[best_idx]
+    smooth_mean = results[best_idx]['smooth_fallback']['mean']
+    smooth_vs_photo_pct = results[best_idx]['improvements']['smooth_vs_photo_pct']
+    
+    return {
+        'best_single': best_single,
+        'oracle': oracle,
+        'headroom': headroom,
+        'headroom_pct': headroom_pct,
+        'photo_mean': photo_mean,
+        'photo_vs_single_pct': photo_vs_single_pct,
+        'pert_mean': pert_mean,
+        'pert_vs_single_pct': pert_vs_single_pct,
+        'optimal_sigma': optimal_sigma,
+        'smooth_mean': smooth_mean,
+        'smooth_vs_photo_pct': smooth_vs_photo_pct,
+    }
+
+
+def collect_series_summary(
+    sequences: list,
+    data_dir: Path,
+    config: dict,
+) -> dict:
+    """
+    Collect summary from all sequences' sigma_sweep.json files.
+    
+    Args:
+        sequences: List of sequence names
+        data_dir: Base data directory
+        config: Config dict (used to compute hashes)
+    
+    Returns:
+        Dict mapping sequence name -> summary metrics
+    """
+    summaries = {}
+    
+    # Get OF hash (same for all sequences since params are identical)
+    of_config = extract_of_config(config)
+    of_hash = compute_of_hash(of_config)
+    
+    for seq in sequences:
+        # Compute movie hash for this sequence
+        seq_config = copy.deepcopy(config)
+        seq_config['source']['sequence'] = seq
+        if 'SEQUENCES' in seq_config['source']:
+            del seq_config['source']['SEQUENCES']
+        
+        source_config = extract_source_config(seq_config)
+        movie_hash = compute_source_hash(source_config)
+        
+        # Find sigma_sweep.json
+        sweep_dir = data_dir / movie_hash / 'analysis' / of_hash / 'sweep'
+        pair_dirs = sorted(sweep_dir.glob('pair_*'))
+        
+        if not pair_dirs:
+            print(f"⚠️  No pair directories found for {seq}, skipping")
+            continue
+        
+        # Use first pair (most sequences have only one)
+        sigma_sweep_path = pair_dirs[0] / 'sigma_sweep.json'
+        
+        if not sigma_sweep_path.exists():
+            print(f"⚠️  sigma_sweep.json not found for {seq}, skipping")
+            continue
+        
+        summary = extract_sequence_summary(sigma_sweep_path)
+        summary['movie_hash'] = movie_hash
+        summaries[seq] = summary
+    
+    return summaries
+
+
+def save_series_summary(
+    summaries: dict,
+    config: dict,
+    config_path: Path,
+    series_dir: Path,
+):
+    """
+    Save series summary as JSON and CSV.
+    
+    Creates:
+        - series_dir/summary.json
+        - series_dir/summary.csv
+        - series_dir/config.toml (copy of original)
+    """
+    series_dir.mkdir(parents=True, exist_ok=True)
+    
+    # Copy config
+    shutil.copy(config_path, series_dir / 'config.toml')
+    
+    # Build full summary dict
+    algorithm = config.get('parameter_sweep', {}).get('algorithm', 'unknown')
+    
+    full_summary = {
+        'config_file': str(config_path),
+        'algorithm': algorithm,
+        'sequences': summaries,
+    }
+    
+    # Save JSON
+    json_path = series_dir / 'summary.json'
+    with open(json_path, 'w') as f:
+        json.dump(full_summary, f, indent=2)
+    
+    # Save CSV
+    csv_path = series_dir / 'summary.csv'
+    with open(csv_path, 'w', newline='') as f:
+        writer = csv.writer(f)
+        
+        # Header
+        writer.writerow([
+            'Sequence',
+            'Best Single',
+            'Oracle',
+            'Headroom',
+            'Headroom %',
+            'Photo Mean',
+            'Photo vs Single %',
+            'Pert Mean',
+            'Pert vs Single %',
+            'Optimal σ',
+            'Smooth Mean', 
+            'Smooth vs Photo %',
+            'Movie Hash',
+        ])
+        
+        # Data rows
+        for seq, s in summaries.items():
+            writer.writerow([
+                seq,
+                f"{s['best_single']:.4f}",
+                f"{s['oracle']:.4f}",
+                f"{s['headroom']:.4f}",
+                f"{s['headroom_pct']:.1f}",
+                f"{s['photo_mean']:.4f}",
+                f"{s['photo_vs_single_pct']:.1f}",
+                f"{s['pert_mean']:.4f}",
+                f"{s['pert_vs_single_pct']:.1f}",
+                f"{s['optimal_sigma']:.1f}",
+                f"{s['smooth_mean']:.4f}",
+                f"{s['smooth_vs_photo_pct']:.1f}",
+                s['movie_hash'],
+            ])
+    
+    return json_path, csv_path
+
+
+def print_series_summary(summaries: dict, config: dict):
+    """Print formatted summary table to stdout."""
+    algorithm = config.get('parameter_sweep', {}).get('algorithm', 'unknown')
+    n_configs = 1
+    
+    # Count configs from parameter_sweep
+    param_sweep = config.get('parameter_sweep', {})
+    for key, value in param_sweep.items():
+        if isinstance(value, list):
+            n_configs *= len(value)
+    
+    print()
+    print("=" * 140)
+    print(f"SERIES SUMMARY ({algorithm.upper()}, {n_configs} configs)")
+    print("=" * 140)
+    
+    # Header
+    print(f"{'Sequence':<14} | {'Best Single':>11} | {'Oracle':>8} | {'Headroom':>8} | {'Photo vs Single':>15} | {'Pert vs Single':>14} | {'σ_opt':>5} | {'Smooth vs Photo':>15}")
+    print("-" * 140)
+    
+    # Data rows
+    for seq, s in summaries.items():
+        photo_sign = "+" if s['photo_vs_single_pct'] > 0 else ""
+        pert_sign = "+" if s['pert_vs_single_pct'] > 0 else ""
+        smooth_sign = "+" if s['smooth_vs_photo_pct'] > 0 else ""
+        
+        print(f"{seq:<14} | {s['best_single']:>11.4f} | {s['oracle']:>8.4f} | {s['headroom_pct']:>7.1f}% | {photo_sign}{s['photo_vs_single_pct']:>14.1f}% | {pert_sign}{s['pert_vs_single_pct']:>13.1f}% | {s['optimal_sigma']:>5.1f} | {smooth_sign}{s['smooth_vs_photo_pct']:>14.1f}%")
+    
+    print("-" * 140)
+    
+    # Averages
+    n = len(summaries)
+    if n > 0:
+        avg_headroom = sum(s['headroom_pct'] for s in summaries.values()) / n
+        avg_photo = sum(s['photo_vs_single_pct'] for s in summaries.values()) / n
+        avg_pert = sum(s['pert_vs_single_pct'] for s in summaries.values()) / n
+        avg_smooth = sum(s['smooth_vs_photo_pct'] for s in summaries.values()) / n
+        
+        photo_sign = "+" if avg_photo > 0 else ""
+        pert_sign = "+" if avg_pert > 0 else ""
+        smooth_sign = "+" if avg_smooth > 0 else ""
+        
+        print(f"{'AVERAGE':<14} | {'-':>11} | {'-':>8} | {avg_headroom:>7.1f}% | {photo_sign}{avg_photo:>14.1f}% | {pert_sign}{avg_pert:>13.1f}% | {'-':>5} | {smooth_sign}{avg_smooth:>14.1f}%")
+    print("=" * 140)
+    print()
+
+
+def run_series(
+    config_path: Path,
+    stage: str,
+    data_dir: Path,
+    force: bool = False,
+    no_cache: bool = False,
+    n_workers: int = None,
+    n_trials: int = None,
+) -> dict:
+    """
+    Run experiment for multiple sequences defined in SEQUENCES.
+    
+    Args:
+        config_path: Path to config file with SEQUENCES list
+        stage: Stage to run
+        data_dir: Base data directory
+        force: Force regeneration
+        no_cache: Skip cache
+        n_workers: Number of workers
+        n_trials: Optuna trials
+    
+    Returns:
+        Series summary dict
+    """
+    with open(config_path, 'rb') as f:
+        config = tomli.load(f)
+    
+    sequences = config['source']['SEQUENCES']
+    series_hash = compute_series_hash(config)
+    series_name = f"{config_path.stem}_{series_hash}"
+    series_dir = data_dir / 'series' / series_name
+    
+    print()
+    print("=" * 80)
+    print("🎬 SERIES MODE")
+    print("=" * 80)
+    print(f"   Config: {config_path}")
+    print(f"   Sequences: {len(sequences)} - {sequences}")
+    print(f"   Series dir: {series_dir}")
+    print()
+    
+    # Check if summary already exists and is up-to-date
+    summary_path = series_dir / 'summary.json'
+    if summary_path.exists() and not force:
+        config_mtime = config_path.stat().st_mtime
+        summary_mtime = summary_path.stat().st_mtime
+        
+        if summary_mtime > config_mtime:
+            print(f"✓ Series summary up-to-date: {summary_path}")
+            print("   Use --force to regenerate")
+            print()
+            
+            # Load and print existing summary
+            with open(summary_path) as f:
+                existing = json.load(f)
+            print_series_summary(existing['sequences'], config)
+            return existing
+    
+    # Run each sequence
+    print(f"Running {len(sequences)} sequences...")
+    print()
+    
+    for i, seq in enumerate(sequences, 1):
+        print()
+        print("=" * 80)
+        print(f"📍 SEQUENCE {i}/{len(sequences)}: {seq}")
+        print("=" * 80)
+        
+        # Create sequence-specific config
+        seq_config = copy.deepcopy(config)
+        seq_config['source']['sequence'] = seq
+        del seq_config['source']['SEQUENCES']
+        
+        # Write temp config
+        series_dir.mkdir(parents=True, exist_ok=True)
+        temp_config_path = series_dir / f'temp_{seq}.toml'
+        
+        with open(temp_config_path, 'wb') as f:
+            tomli_w.dump(seq_config, f)
+        
+        # Run experiment for this sequence
+        run_experiment(
+            config_path=temp_config_path,
+            stage=stage,
+            data_dir=data_dir,
+            force=force,
+            no_cache=no_cache,
+            n_workers=n_workers,
+            n_trials=n_trials,
+        )
+        
+        # Clean up temp config
+        temp_config_path.unlink()
+    
+    # Collect and save summary
+    print()
+    print("=" * 80)
+    print("📊 COLLECTING SERIES SUMMARY")
+    print("=" * 80)
+    print()
+    
+    summaries = collect_series_summary(sequences, data_dir, config)
+    json_path, csv_path = save_series_summary(summaries, config, config_path, series_dir)
+    
+    print(f"   ✓ Saved: {json_path}")
+    print(f"   ✓ Saved: {csv_path}")
+    
+    # Print summary table
+    print_series_summary(summaries, config)
+    
+    return {'sequences': summaries, 'series_dir': str(series_dir)}
 
 
 # =============================================================================
@@ -725,7 +1095,10 @@ def run_experiment(
             n_trials=trials
         )
         results['optimization'] = {
-            m: {'best_epe': r['best_epe'], 'best_weights': r['best_weights']}
+            m: {
+                'best_epe': r['best_epe'], 
+                'best_params': r.get('best_params', r.get('best_weights', {}))
+            }
             for m, r in optimization_results.items()
         }
         
@@ -762,6 +1135,13 @@ def run_experiment(
             config=config
         )
         print_ranking_comparison(analysis_dir)
+        
+        # Ensemble analysis (sigma sweep)
+        from src.ensemble.analysis import analyze_and_save
+        for pair_dir in sorted(sweep_dir.glob('pair_*')):
+            results_path = pair_dir / 'results_full.pkl'
+            if results_path.exists():
+                analyze_and_save(results_path, config)
     
     # ========================================================================
     # Summary
@@ -813,6 +1193,23 @@ def main():
                        help='Explicit OF hash (for optimize without sweep)')
     
     args = parser.parse_args()
+    
+    # Check for series mode (SEQUENCES list in config)
+    if args.config.exists():
+        with open(args.config, 'rb') as f:
+            config_check = tomli.load(f)
+        
+        if 'source' in config_check and 'SEQUENCES' in config_check['source']:
+            run_series(
+                config_path=args.config,
+                stage=args.stage,
+                data_dir=args.data_dir,
+                force=args.force,
+                no_cache=args.no_cache,
+                n_workers=args.workers,
+                n_trials=args.trials,
+            )
+            return
     
     # Handle explicit hashes for partial runs
     if args.movie_hash or args.of_hash:

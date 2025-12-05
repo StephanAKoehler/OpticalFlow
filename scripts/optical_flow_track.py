@@ -228,7 +228,7 @@ def process_pair(
         with open(results_path, 'rb') as f:
             results_full = pickle.load(f)
         
-        oracle_data = np.load(oracle_path)
+        oracle_data = np.load(oracle_path, allow_pickle=True)
         oracle = {k: oracle_data[k] for k in oracle_data.files}
         # Convert scalar arrays back to floats
         for k in ['oracle_epe_forward', 'oracle_epe_symmetric', 
@@ -304,6 +304,15 @@ def process_pair(
     
     if oracle is not None:
         np.savez(oracle_path, **oracle)
+    
+    # Save frame_constants for multiplicative loss
+    from src.core.sweep import get_last_frame_constants
+    frame_constants = get_last_frame_constants()
+    if frame_constants is not None:
+        import json
+        fc_path = pair_dir / 'frame_constants.json'
+        with open(fc_path, 'w') as f:
+            json.dump(frame_constants, f, indent=2)
     
     # Save sweep summary CSV
     save_sweep_summary(results_full, oracle, pair, epe_power, pair_dir)

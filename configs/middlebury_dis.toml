@@ -1,0 +1,43 @@
+# File: configs/middlebury_dis_expanded.toml
+# Middlebury sequences - DIS optical flow (expanded sweep)
+
+[source]
+type = "middlebury"
+middlebury_root = "~/Dropbox/Projects/OpticalFlow_Middlebury"
+SEQUENCES = ["Dimetrodon", "Grove2", "Grove3", "Hydrangea",
+             "RubberWhale", "Urban2", "Urban3", "Venus"]
+
+[parameter_sweep]
+algorithm = "dis"
+# Remove preset to avoid conflicts with explicit params
+finest_scale = [1]              # 2 values: finest (0) vs coarser (1)
+iterations = [8, 12, 25, 50]       # 4 values: quick to thorough
+patch_size = [6, 8, 12, 16]        # 4 values: small to large
+patch_stride = [2, 3, 4]           # 3 values: dense to sparse
+
+# 2 × 4 × 4 × 3 = 96 configs (matches Farneback)
+
+[perturbations]
+directions = 2
+magnitude = 2
+
+[evaluation]
+ground_truth = true
+epe_power = 2
+
+[ensemble]
+sigma = [0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 4.0, 5.0, 10.0]
+
+[optimization]
+loss_function = "multiplicative"
+n_trials = 200
+
+[optimization.multiplicative_params]
+c_gray = 0.5
+c_r = 0.5
+c_g = 0.5
+c_b = 0.5
+c_log = 0.5
+c_traction = 0.5
+c_consistency = 0.5
+c_perturbation = 0.5

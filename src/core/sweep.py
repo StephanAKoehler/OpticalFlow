@@ -36,9 +36,10 @@ def compute_rms_diff(frame1: np.ndarray, frame2: np.ndarray) -> float:
     Returns:
         RMS difference (scalar)
     """
+    import cv2
+    
     # Handle RGB frames - convert to grayscale for RMS diff
     if frame1.ndim == 3:
-        import cv2
         f1 = cv2.cvtColor(frame1, cv2.COLOR_RGB2GRAY).astype(np.float32)
         f2 = cv2.cvtColor(frame2, cv2.COLOR_RGB2GRAY).astype(np.float32)
     else:
@@ -47,6 +48,72 @@ def compute_rms_diff(frame1: np.ndarray, frame2: np.ndarray) -> float:
     
     diff = f1 - f2
     return float(np.sqrt(np.mean(diff ** 2)))
+
+
+def compute_frame_constants(frame1: np.ndarray, frame2: np.ndarray,
+                            deltas: List[tuple],
+                            frame1_rgb: np.ndarray = None,
+                            frame2_rgb: np.ndarray = None) -> dict:
+    """
+    Compute normalization constants for the frame pair.
+    
+    These are used by the multiplicative loss function.
+    
+    Args:
+        frame1, frame2: Grayscale frames for optical flow
+        deltas: List of perturbation vectors [(dx, dy), ...]
+        frame1_rgb, frame2_rgb: Optional RGB frames
+        
+    Returns:
+        dict with:
+            - rms_diff: RMS intensity difference
+            - max_gray: Max grayscale intensity
+            - max_r, max_g, max_b: Max per-channel (if RGB)
+            - max_log: Max of log(1 + grayscale)
+            - perturbation_distance: RMS of perturbation magnitudes
+    """
+    import cv2
+    
+    # Get grayscale versions
+    if frame1.ndim == 3:
+        f1_gray = cv2.cvtColor(frame1, cv2.COLOR_RGB2GRAY).astype(np.float32)
+        f2_gray = cv2.cvtColor(frame2, cv2.COLOR_RGB2GRAY).astype(np.float32)
+    else:
+        f1_gray = frame1.astype(np.float32)
+        f2_gray = frame2.astype(np.float32)
+    
+    # RMS diff
+    diff = f1_gray - f2_gray
+    rms_diff = float(np.sqrt(np.mean(diff ** 2)))
+    
+    # Max grayscale (use max of both frames)
+    max_gray = float(max(np.max(f1_gray), np.max(f2_gray)))
+    
+    # Max log (for log-space photometric)
+    max_log = float(max(np.max(np.log1p(f1_gray)), np.max(np.log1p(f2_gray))))
+    
+    # Perturbation distance (RMS of perturbation magnitudes)
+    pert_magnitudes = [np.hypot(dx, dy) for dx, dy in deltas]
+    perturbation_distance = float(np.sqrt(np.mean([m**2 for m in pert_magnitudes])))
+    
+    constants = {
+        'rms_diff': rms_diff,
+        'max_gray': max_gray,
+        'max_log': max_log,
+        'perturbation_distance': perturbation_distance,
+    }
+    
+    # RGB per-channel max (if RGB frames provided)
+    if frame1_rgb is not None and frame2_rgb is not None:
+        if frame1_rgb.ndim == 3 and frame1_rgb.shape[2] == 3:
+            f1_rgb = frame1_rgb.astype(np.float32)
+            f2_rgb = frame2_rgb.astype(np.float32)
+            
+            constants['max_r'] = float(max(np.max(f1_rgb[:,:,0]), np.max(f2_rgb[:,:,0])))
+            constants['max_g'] = float(max(np.max(f1_rgb[:,:,1]), np.max(f2_rgb[:,:,1])))
+            constants['max_b'] = float(max(np.max(f1_rgb[:,:,2]), np.max(f2_rgb[:,:,2])))
+    
+    return constants
 
 
 def compute_config_worker(args):
@@ -114,7 +181,8 @@ def compute_sweep(frame1: np.ndarray,
                  deltas: List[tuple],
                  n_workers: int = None,
                  frame1_original: np.ndarray = None,
-                 frame2_original: np.ndarray = None) -> List[Dict]:
+                 frame2_original: np.ndarray = None,
+                 return_constants: bool = False) -> List[Dict]:
     """
     Compute optical flow sweep for all configurations.
     
@@ -126,9 +194,11 @@ def compute_sweep(frame1: np.ndarray,
         n_workers: Number of parallel workers
         frame1_original, frame2_original: Optional RGB frames for RGB photometric metrics
                                          If provided, RGB metrics will be computed
+        return_constants: If True, return (results_native, frame_constants) tuple
         
     Returns:
-        List of results_native dicts (downsampled metrics)
+        If return_constants=False (default): List of results_native dicts
+        If return_constants=True: (results_native, frame_constants) tuple
     """
     print("⚙️  Computing optical flow sweep...")
     
@@ -139,21 +209,30 @@ def compute_sweep(frame1: np.ndarray,
     print(f"   Configurations: {n_configs}")
     print(f"   Workers: {n_workers}")
     
-    # Compute rms_diff once for the frame pair (use grayscale)
-    rms_diff = compute_rms_diff(frame1, frame2)
-    print(f"   RMS diff (frame pair): {rms_diff:.2f}")
-    
     # Check if RGB frames are available
     has_rgb = frame1_original is not None and frame2_original is not None
     if has_rgb:
         is_rgb = frame1_original.ndim == 3 and frame1_original.shape[2] == 3
-        if is_rgb:
-            print(f"   RGB frames: Available (will compute RGB photometric)")
-        else:
+        if not is_rgb:
             print(f"   RGB frames: Provided but not RGB format")
             has_rgb = False
+    
+    # Compute frame constants (normalization values)
+    if has_rgb:
+        frame_constants = compute_frame_constants(
+            frame1, frame2, deltas, frame1_original, frame2_original
+        )
+        print(f"   RGB frames: Available (will compute RGB photometric)")
     else:
+        frame_constants = compute_frame_constants(frame1, frame2, deltas)
         print(f"   RGB frames: Not provided (grayscale photometric only)")
+    
+    rms_diff = frame_constants['rms_diff']
+    print(f"   RMS diff (frame pair): {rms_diff:.2f}")
+    print(f"   Max grayscale: {frame_constants['max_gray']:.1f}")
+    if 'max_r' in frame_constants:
+        print(f"   Max RGB: R={frame_constants['max_r']:.1f}, G={frame_constants['max_g']:.1f}, B={frame_constants['max_b']:.1f}")
+    print(f"   Perturbation distance: {frame_constants['perturbation_distance']:.2f}")
     print()
     
     # Prepare worker arguments
@@ -182,7 +261,21 @@ def compute_sweep(frame1: np.ndarray,
     print(f"   ✅ Computed {n_configs} configurations")
     print()
     
+    # Store frame_constants as module-level for later retrieval
+    compute_sweep._last_frame_constants = frame_constants
+    
+    if return_constants:
+        return results_native, frame_constants
     return results_native
+
+
+# Initialize storage for frame_constants
+compute_sweep._last_frame_constants = None
+
+
+def get_last_frame_constants() -> Optional[dict]:
+    """Get frame_constants from the last compute_sweep() call."""
+    return compute_sweep._last_frame_constants
 
 
 def upsample_and_compute_oracle(results_native: List[Dict],
@@ -309,20 +402,13 @@ def upsample_and_compute_oracle(results_native: List[Dict],
     epe_stack_sym_standard = np.zeros((n_configs, H, W), dtype=np.float32)
     
     for i, result in enumerate(results_flat):
-        # Handle different field name formats
-        if 'u_sym_A' in result:
-            u, v = result['u_sym_A'], result['v_sym_A']
-        elif 'u_symmetric' in result:
-            u, v = result['u_symmetric'], result['v_symmetric']
-        else:
-            print(f"❌ ERROR: Cannot find symmetric flow in result keys: {list(result.keys())}")
-            sys.exit(1)
+        u, v = result['u_sym_A'], result['v_sym_A']
         
-        # Powered EPE
+        # Powered EPE (for selection)
         epe_powered = compute_epe(u, v, u_truth, v_truth, valid_mask, power=epe_power)
         epe_stack_sym_powered[i] = epe_powered
         
-        # Standard EPE
+        # Standard EPE (for reporting)
         epe_standard = compute_epe(u, v, u_truth, v_truth, valid_mask, power=1.0)
         epe_stack_sym_standard[i] = epe_standard
     
@@ -334,18 +420,10 @@ def upsample_and_compute_oracle(results_native: List[Dict],
     v_oracle_sym = np.zeros((H, W), dtype=np.float32)
     for i in range(n_configs):
         mask = oracle_selection_sym == i
-        # Handle different field name formats
-        if 'u_sym_A' in results_flat[i]:
-            u_oracle_sym[mask] = results_flat[i]['u_sym_A'][mask]
-            v_oracle_sym[mask] = results_flat[i]['v_sym_A'][mask]
-        elif 'u_symmetric' in results_flat[i]:
-            u_oracle_sym[mask] = results_flat[i]['u_symmetric'][mask]
-            v_oracle_sym[mask] = results_flat[i]['v_symmetric'][mask]
-        else:
-            print(f"❌ ERROR: Cannot find symmetric flow in result keys")
-            sys.exit(1)
+        u_oracle_sym[mask] = results_flat[i]['u_sym_A'][mask]
+        v_oracle_sym[mask] = results_flat[i]['v_sym_A'][mask]
     
-    # Compute oracle EPE (both versions) - mean, std, median over valid pixels
+    # Compute oracle EPE (both versions)
     oracle_epe_sym_powered_pixels = epe_stack_sym_powered[oracle_selection_sym,
                               np.arange(H)[:, None],
                               np.arange(W)][valid_mask]
@@ -360,44 +438,115 @@ def upsample_and_compute_oracle(results_native: List[Dict],
     oracle_epe_sym_standard_std = np.nanstd(oracle_epe_sym_standard_pixels)
     oracle_epe_sym_standard_median = np.nanmedian(oracle_epe_sym_standard_pixels)
     
-    print(f"   Oracle EPE^{epe_power}: {oracle_epe_sym_powered:.6f}")
+    print(f"   Oracle EPE (powered, p={epe_power}):")
+    print(f"      Forward:   {oracle_epe_fwd_powered:.4f} ± {oracle_epe_fwd_powered_std:.4f}")
+    print(f"      Symmetric: {oracle_epe_sym_powered:.4f} ± {oracle_epe_sym_powered_std:.4f}")
+    print(f"   Oracle EPE (standard, p=1.0):")
+    print(f"      Forward:   {oracle_epe_fwd_standard:.4f} ± {oracle_epe_fwd_standard_std:.4f}")
+    print(f"      Symmetric: {oracle_epe_sym_standard:.4f} ± {oracle_epe_sym_standard_std:.4f}")
+    print()
+    
+    # Build comprehensive oracle dict
+    oracle = {
+        'epe_power': epe_power,
+        
+        # Forward oracle
+        'forward': {
+            'selection': oracle_selection_fwd,
+            'u_oracle': u_oracle_fwd,
+            'v_oracle': v_oracle_fwd,
+            'epe_stack_powered': epe_stack_fwd_powered,
+            'epe_stack_standard': epe_stack_fwd_standard,
+            'epe_powered': oracle_epe_fwd_powered,
+            'epe_powered_std': oracle_epe_fwd_powered_std,
+            'epe_powered_median': oracle_epe_fwd_powered_median,
+            'epe_standard': oracle_epe_fwd_standard,
+            'epe_standard_std': oracle_epe_fwd_standard_std,
+            'epe_standard_median': oracle_epe_fwd_standard_median,
+        },
+        
+        # Symmetric oracle
+        'symmetric': {
+            'selection': oracle_selection_sym,
+            'u_oracle': u_oracle_sym,
+            'v_oracle': v_oracle_sym,
+            'epe_stack_powered': epe_stack_sym_powered,
+            'epe_stack_standard': epe_stack_sym_standard,
+            'epe_powered': oracle_epe_sym_powered,
+            'epe_powered_std': oracle_epe_sym_powered_std,
+            'epe_powered_median': oracle_epe_sym_powered_median,
+            'epe_standard': oracle_epe_sym_standard,
+            'epe_standard_std': oracle_epe_sym_standard_std,
+            'epe_standard_median': oracle_epe_sym_standard_median,
+        },
+        
+        # Legacy compatibility (use standard EPE for backward compatibility)
+        'oracle_selection_forward': oracle_selection_fwd,
+        'oracle_selection_symmetric': oracle_selection_sym,
+        'oracle_epe_forward': oracle_epe_fwd_standard,
+        'oracle_epe_symmetric': oracle_epe_sym_standard,
+        'u_oracle_forward': u_oracle_fwd,
+        'v_oracle_forward': v_oracle_fwd,
+        'u_oracle_symmetric': u_oracle_sym,
+        'v_oracle_symmetric': v_oracle_sym,
+    }
     
     return {
         'results_full': results_full,
-        'oracle': {
-            # Forward flows
-            'u_oracle_fwd': u_oracle_fwd,
-            'v_oracle_fwd': v_oracle_fwd,
-            'oracle_selection_fwd': oracle_selection_fwd,
-            
-            # Symmetric flows
-            'u_oracle_sym': u_oracle_sym,
-            'v_oracle_sym': v_oracle_sym,
-            'oracle_selection_sym': oracle_selection_sym,
-            
-            # EPE values (powered - what was optimized)
-            'oracle_epe_forward_powered': float(oracle_epe_fwd_powered),
-            'oracle_epe_forward_powered_std': float(oracle_epe_fwd_powered_std),
-            'oracle_epe_forward_powered_median': float(oracle_epe_fwd_powered_median),
-            'oracle_epe_symmetric_powered': float(oracle_epe_sym_powered),
-            'oracle_epe_symmetric_powered_std': float(oracle_epe_sym_powered_std),
-            'oracle_epe_symmetric_powered_median': float(oracle_epe_sym_powered_median),
-            
-            # EPE values (standard - for reporting/comparison)
-            'oracle_epe_forward_standard': float(oracle_epe_fwd_standard),
-            'oracle_epe_forward_standard_std': float(oracle_epe_fwd_standard_std),
-            'oracle_epe_forward_standard_median': float(oracle_epe_fwd_standard_median),
-            'oracle_epe_symmetric_standard': float(oracle_epe_sym_standard),
-            'oracle_epe_symmetric_standard_std': float(oracle_epe_sym_standard_std),
-            'oracle_epe_symmetric_standard_median': float(oracle_epe_sym_standard_median),
-            
-            # Backward compatibility (use standard for old code)
-            'oracle_epe_forward': float(oracle_epe_fwd_standard),
-            'oracle_epe_symmetric': float(oracle_epe_sym_standard),
-            
-            # Metadata
-            'epe_power': epe_power
-        }
+        'oracle': oracle
+    }
+
+
+def run_sweep_pipeline(frame1: np.ndarray,
+                      frame2: np.ndarray,
+                      configs: List[dict],
+                      deltas: List[tuple],
+                      u_truth: np.ndarray,
+                      v_truth: np.ndarray,
+                      valid_mask: np.ndarray,
+                      n_workers: int = None,
+                      epe_power: float = 2.0,
+                      frame1_original: np.ndarray = None,
+                      frame2_original: np.ndarray = None) -> Dict:
+    """
+    Run complete sweep pipeline: compute, upsample, compute oracle.
+    
+    Args:
+        frame1, frame2: Input frames for OF computation
+        configs: List of OF configurations
+        deltas: List of perturbation vectors
+        u_truth, v_truth: Ground truth flows
+        valid_mask: Valid pixel mask
+        n_workers: Number of parallel workers
+        epe_power: Power for EPE aggregation (1.0=MAE, 2.0=MSE)
+        frame1_original, frame2_original: Optional RGB frames for RGB photometric metrics
+        
+    Returns:
+        dict with:
+            - results_native: Native resolution results
+            - results_full: Full resolution results
+            - oracle: Oracle results dict
+            - frame_constants: Normalization constants for the frame pair
+    """
+    H, W = u_truth.shape
+    
+    # Compute sweep (with frame_constants)
+    results_native, frame_constants = compute_sweep(
+        frame1, frame2, configs, deltas, n_workers,
+        frame1_original, frame2_original,
+        return_constants=True
+    )
+    
+    # Upsample and compute oracle
+    oracle_result = upsample_and_compute_oracle(
+        results_native, H, W, u_truth, v_truth, valid_mask, epe_power
+    )
+    
+    return {
+        'results_native': results_native,
+        'results_full': oracle_result['results_full'],
+        'oracle': oracle_result['oracle'],
+        'frame_constants': frame_constants
     }
 
 
@@ -405,7 +554,8 @@ def save_sweep_to_cache(exp_cache, results_full: List[Dict],
                        u_truth: Optional[np.ndarray], v_truth: Optional[np.ndarray],
                        valid_mask: np.ndarray,
                        oracle_epe_forward: Optional[float], oracle_epe_symmetric: Optional[float],
-                       epe_power: float = 1.0):
+                       epe_power: float = 1.0,
+                       frame_constants: dict = None):
     """Save sweep results to cache.
     
     Args:
@@ -415,8 +565,13 @@ def save_sweep_to_cache(exp_cache, results_full: List[Dict],
         valid_mask: Boolean mask for valid pixels
         oracle_epe_forward, oracle_epe_symmetric: Oracle EPE values (can be None)
         epe_power: Power for EPE computation (stored for cache validation)
+        frame_constants: Normalization constants for the frame pair (auto-retrieved if None)
     """
     print("   Saving sweep results to cache...")
+    
+    # Auto-retrieve frame_constants if not provided
+    if frame_constants is None:
+        frame_constants = get_last_frame_constants()
     
     # Flatten results for backward compatibility with build_sweep_dataframe
     from src.core.data_structures import flatten_for_visualization
@@ -436,16 +591,23 @@ def save_sweep_to_cache(exp_cache, results_full: List[Dict],
     with open(results_full_path, 'wb') as f:
         pickle.dump(results_full, f)
     
-    print(f"   ✅ Saved sweep results and full data (epe_power={epe_power})")
+    # Save frame_constants for multiplicative loss
+    if frame_constants is not None:
+        frame_constants_path = exp_cache.current_dir / 'frame_constants.json'
+        with open(frame_constants_path, 'w') as f:
+            json.dump(frame_constants, f, indent=2)
+        print(f"   ✅ Saved sweep results, full data, and frame constants (epe_power={epe_power})")
+    else:
+        print(f"   ✅ Saved sweep results and full data (epe_power={epe_power})")
 
 
-def load_sweep_from_cache(exp_cache, expected_epe_power: float = None):
+def load_sweep_from_cache(exp_cache, expected_epe_power: float = None) -> Dict:
     """
     Load sweep results from cache.
     
     Args:
-        exp_cache: Experiment cache object
-        expected_epe_power: If provided, validate cached data was computed with this power
+        exp_cache: ExperimentCache instance
+        expected_epe_power: If provided, warn if cached EPE power differs
     
     Returns:
         dict with:
@@ -454,6 +616,7 @@ def load_sweep_from_cache(exp_cache, expected_epe_power: float = None):
             - oracle_epe_forward, oracle_epe_symmetric: Oracle EPE values
             - epe_power: EPE power used for cached computation
             - epe_power_mismatch: True if cached power differs from expected
+            - frame_constants: Normalization constants (if available)
     """
     print("📂 Loading sweep from cache...")
     
@@ -470,6 +633,17 @@ def load_sweep_from_cache(exp_cache, expected_epe_power: float = None):
     else:
         results_full = None
         print(f"   ⚠️  Full results not in cache")
+    
+    # Load frame_constants if available
+    frame_constants_path = exp_cache.current_dir / 'frame_constants.json'
+    if frame_constants_path.exists():
+        import json
+        with open(frame_constants_path, 'r') as f:
+            frame_constants = json.load(f)
+        print(f"   ✅ Loaded frame constants")
+    else:
+        frame_constants = None
+        print(f"   ⚠️  Frame constants not in cache")
     
     # Extract oracle EPE from sweep_df
     oracle_epe_forward = sweep_df['oracle_epe_forward'].iloc[0]
@@ -497,7 +671,8 @@ def load_sweep_from_cache(exp_cache, expected_epe_power: float = None):
         'oracle_epe_forward': oracle_epe_forward,
         'oracle_epe_symmetric': oracle_epe_symmetric,
         'epe_power': cached_epe_power,
-        'epe_power_mismatch': epe_power_mismatch
+        'epe_power_mismatch': epe_power_mismatch,
+        'frame_constants': frame_constants
     }
 
 
